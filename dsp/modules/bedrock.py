@@ -35,29 +35,50 @@ class Bedrock(AWSLM):
             max_new_tokens=max_new_tokens,
             batch_n=True,  # Bedrock does not support the `n` parameter
         )
-        self._validate_model(model)
-        self.provider = "claude" if "claude" in model.lower() else "bedrock"
+        #self._validate_model(model)
 
-    def _validate_model(self, model: str) -> None:
-        if "claude" not in model.lower():
-            raise NotImplementedError("Only claude models are supported as of now")
+    # def _validate_model(self, model: str) -> None:
+    #     if "claude" not in model.lower():
+    #         raise NotImplementedError("Only claude models are supported as of now")
 
     def _create_body(self, prompt: str, **kwargs) -> dict[str, str | float]:
-        base_args: dict[str, Any] = {
-            "max_tokens_to_sample": self._max_new_tokens,
-        }
-        for k, v in kwargs.items():
-            base_args[k] = v
-        query_args: dict[str, Any] = self._sanitize_kwargs(base_args)
-        query_args["prompt"] = prompt
-        # AWS Bedrock forbids these keys
-        if "max_tokens" in query_args:
-            max_tokens: int = query_args["max_tokens"]
-            input_tokens: int = self._estimate_tokens(prompt)
-            max_tokens_to_sample: int = max_tokens - input_tokens
-            del query_args["max_tokens"]
-            query_args["max_tokens_to_sample"] = max_tokens_to_sample
-        return query_args
+        if "titan" in self._model_name.lower():
+            base_args: dict[str, Any] = {
+                "maxTokenCount": self._max_new_tokens,
+            }
+            for k, v in kwargs.items():
+                base_args[k] = v
+            query_args: dict[str, Any] = self._sanitize_kwargs(base_args)
+            query_args["inputText"] = prompt
+            query_args['textGenerationConfig']={}
+            # AWS Bedrock forbids these keys
+            if "maxTokenCount" in query_args:
+                max_tokens: int = query_args["maxTokenCount"]
+                input_tokens: int = self._estimate_tokens(prompt)
+                max_tokens_to_sample: int = max_tokens - input_tokens
+                del query_args["maxTokenCount"]
+                query_args['textGenerationConfig']["maxTokenCount"] = max_tokens_to_sample
+            if "temperature" in query_args:
+                temp = query_args['temperature']
+                del query_args["temperature"]
+                query_args['textGenerationConfig']['temperature']=temp
+            return query_args
+        elif "claude" in self._model_name.lower():
+            base_args: dict[str, Any] = {
+                "max_tokens_to_sample": self._max_new_tokens,
+            }
+            for k, v in kwargs.items():
+                base_args[k] = v
+            query_args: dict[str, Any] = self._sanitize_kwargs(base_args)
+            query_args["prompt"] = prompt
+            # AWS Bedrock forbids these keys
+            if "max_tokens" in query_args:
+                max_tokens: int = query_args["max_tokens"]
+                input_tokens: int = self._estimate_tokens(prompt)
+                max_tokens_to_sample: int = max_tokens - input_tokens
+                del query_args["max_tokens"]
+                query_args["max_tokens_to_sample"] = max_tokens_to_sample
+            return query_args
 
     def _call_model(self, body: str) -> str:
         response = self.predictor.invoke_model(
@@ -67,7 +88,10 @@ class Bedrock(AWSLM):
             contentType="application/json",
         )
         response_body = json.loads(response["body"].read())
-        completion = response_body["completion"]
+        if "claude" in self._model_name:
+            completion = response_body["completion"]
+        elif "titan" in self._model_name:
+            completion=response_body["results"][0]["outputText"]
         return completion
 
     def _extract_input_parameters(
@@ -76,4 +100,7 @@ class Bedrock(AWSLM):
         return body
 
     def _format_prompt(self, raw_prompt: str) -> str:
-        return "\n\nHuman: " + raw_prompt + "\n\nAssistant:"
+        if "claude" in self._model_name:
+            return "\n\nHuman: " + raw_prompt + "\n\nAssistant:"
+        elif "titan" in self._model_name:
+            return "User: " + raw_prompt + "Bot:"
